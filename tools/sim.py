@@ -140,21 +140,21 @@ def seed_source_db(url: str, gpkg: str, layers: list[str], extra_csv: dict[str, 
 
 def write_job(work: Path, endpoint: str, region: str, bucket: str, gpkg: str, sqlite: str | None, share: str,
               arcgis_url: str, arcgis_layers: list[int], sftp_port: int, sftp_root: str, gis_layers: list[str] | None,
-              db_tables: list[str]) -> Path:
+              db_tables: list[str], job_name: str = "og-field-to-govcloud", cdc: bool = False) -> Path:
     import yaml
     part = "aws-us-gov" if region.startswith("us-gov") else "aws"
     sources = [
         {"name": "field_gis", "type": "gis_file", "path": gpkg, **({"layers": gis_layers} if gis_layers else {})},
-        {"name": "onprem_geodb", "type": "database", "url_env": "AWSMIG_SOURCE_DB", "schemas": ["gis"], "tables": db_tables},
+        {"name": "onprem_geodb", "type": "database", "url_env": "AWSMIG_SOURCE_DB", "schemas": ["gis"], "tables": db_tables, **({"cdc": True} if cdc else {})},
     ]
     if sqlite:
         sources.append({"name": "land_records", "type": "database", "url_env": "AWSMIG_LAND_RECORDS_DB"})
     sources += [
         {"name": "esri_field_service", "type": "esri", "layers": [f"{arcgis_url}/{i}" for i in arcgis_layers], "token_env": "AWSMIG_ARCGIS_TOKEN"},
-        {"name": "records_share", "type": "files", "path": share},
+        {"name": "records_share", "type": "files", "path": share, **({"ongoing": True} if cdc else {})},
         {"name": "partner_sftp", "type": "sftp", "host": "127.0.0.1", "port": sftp_port, "username": "field", "password_env": "AWSMIG_SFTP_PASSWORD", "path": "/"},
     ]
-    job = {"job": "og-field-to-govcloud", "marking": "CUI", "state_dir": str(work / "state"),
+    job = {"job": job_name, "marking": "CUI", "state_dir": str(work / "state"),
            "aws": {"partition": part, "region": region, "fips": True, "endpoint_url": endpoint, "kms_key": "alias/awsmig-landing"},
            "target": {"s3": {"bucket": bucket, "prefix": "landing/og-field"}, "postgis": {"url_env": "AWSMIG_TARGET_DB", "schema": "landing"}},
            "network": {"mbps": 200, "utilization": 0.6}, "sources": sources}
@@ -169,6 +169,8 @@ def main():
     ap.add_argument("--data", default="sample", help="'sample' or a GeoPackage path")
     ap.add_argument("--work", default=".sim")
     ap.add_argument("--region", default="us-gov-west-1")
+    ap.add_argument("--job-name", default="og-field-to-govcloud")
+    ap.add_argument("--cutover", action="store_true", help="mark the database as live (DMS + CDC) and the share as ongoing (DataSync)")
     ap.add_argument("--extra-csv", nargs="*", default=[], help="name=path CSV tables to add to the source database")
     a = ap.parse_args()
     work = Path(a.work).resolve()
@@ -210,7 +212,7 @@ def main():
                "AWSMIG_ARCGIS_TOKEN": token, "AWSMIG_SFTP_PASSWORD": sftp_pw, "AWS_ACCESS_KEY_ID": "simulated", "AWS_SECRET_ACCESS_KEY": "simulated"}
         os.environ.update(env)
         job = write_job(work, endpoint, a.region, bucket, gpkg, sample["sqlite"], sample["share"], arc_url, list(range(len(esri_layers))),
-                        sport, sample["sftp"], None, ["*"] if not extra else ["*"])
+                        sport, sample["sftp"], None, ["*"], a.job_name, a.cutover)
         print(f"Simulated environment ready. Job file: {job}")
         if a.cmd == "up":
             print("\n".join(f"export {k}='{v}'" for k, v in env.items()))
