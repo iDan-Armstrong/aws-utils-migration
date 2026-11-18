@@ -1,0 +1,59 @@
+# awsmig job file. Secrets never go here: name the environment variables that hold them.
+job: county-records-to-govcloud        # lowercase letters, digits and hyphens
+marking: CUI                            # PUBLIC, CUI, CUI//SP-PRVCY, PCII or FOUO; stamped on every object and table
+
+aws:
+  partition: aws-us-gov                 # aws or aws-us-gov
+  region: us-gov-west-1
+  fips: true                            # FIPS 140 validated endpoints
+  profile: migration                    # optional named profile (for example an IAM Identity Center role)
+  kms_key: alias/awsmig-dev-landing     # from the Terraform output; omit for SSE-S3
+  # endpoint_url: http://127.0.0.1:5000 # only for a simulated environment
+
+target:
+  s3:
+    bucket: awsmig-dev-landing-123456789012
+    prefix: landing/county-records
+  postgis:                              # optional: also load tables into RDS PostGIS
+    url_env: AWSMIG_TARGET_DB           # postgresql://awsmig_loader:<token>@host:5432/postgres?sslmode=verify-full
+    schema: landing
+
+network:
+  mbps: 200                             # what the site can actually push to AWS
+  utilization: 0.6                      # the share awsmig may use during business hours
+
+sources:
+  - name: parcels_gdb
+    type: gis_file
+    path: ./data/Parcels.gdb            # file geodatabase, GeoPackage, shapefile folder, GeoJSON, CSV
+    layers: ["Parcels", "Easement*"]    # optional list or globs
+
+  - name: enterprise_gdb
+    type: database
+    url_env: AWSMIG_SOURCE_DB           # mssql+pyodbc://..., oracle+oracledb://..., postgresql+psycopg://...
+    schemas: [gis]
+    tables: ["*"]
+    exclude: ["*_archive"]
+    cdc: false                          # true routes the tables to AWS DMS full load + CDC
+
+  - name: records_share
+    type: files
+    path: //fileserver/records          # or a mounted path
+    include: ["*.pdf", "*.tif", "*.las"]
+
+  - name: vendor_sftp
+    type: sftp
+    host: sftp.vendor.example
+    port: 22
+    username: county
+    password_env: AWSMIG_SFTP_PASSWORD  # or key_file: ~/.ssh/vendor_rsa
+    host_key: "<hex of the server RSA key, pinned>"
+    path: /outbound
+    ongoing: true                       # recommends AWS Transfer Family for the drops that keep coming
+
+  - name: agol_inspections
+    type: esri
+    layers:
+      - https://services.arcgis.com/<org>/arcgis/rest/services/Inspections/FeatureServer/0
+    token_env: AWSMIG_ARCGIS_TOKEN
+    attachments: true
