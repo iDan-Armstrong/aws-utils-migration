@@ -98,3 +98,17 @@ def test_invalid_geometry_is_counted_not_hidden():
     f = Fingerprint(["geom"], "geom")
     f.add_rows([{"geom": shapely.to_wkb(bow)}])
     assert f.to_dict()["invalid_geometries"] == 1
+
+
+def test_aspatial_geopackage_table_has_no_geometry(tmp_path):
+    import geopandas as gpd
+    import pandas as pd
+    import pyogrio
+
+    from awsmig.sources.gisfile import GisFileSource
+    p = tmp_path / "mixed.gpkg"
+    gpd.GeoDataFrame({"a": [1]}, geometry=[box(0, 0, 1, 1)], crs=32614).to_file(p, layer="tracts")
+    pyogrio.write_dataframe(pd.DataFrame({"owner": ["Ada"], "share": [0.25]}), p, layer="owners")
+    items = {i.name: i for i in GisFileSource({"name": "g", "path": str(p)}).discover()}
+    assert items["tracts"].geometry == "geom" and items["tracts"].srid == 32614
+    assert items["owners"].geometry is None and "geom" not in [c.name for c in items["owners"].columns]

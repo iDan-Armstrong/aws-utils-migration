@@ -54,7 +54,9 @@ class GisFileSource:
                 info = pyogrio.read_info(ds, layer=layer)
                 cols = [Column(n, normalize_type(str(t)), str(t)) for n, t in zip(info["fields"], info["dtypes"])]
                 geom = None
-                if gtype and info.get("geometry_type"):
+                gt = info.get("geometry_type")
+                # aspatial tables in a GeoPackage report "Unknown" with no coordinate system
+                if gtype and gt and not (gt == "Unknown" and not info.get("crs")):
                     geom = "geom"
                     cols.append(Column("geom", "geometry", str(info["geometry_type"])))
                 sample = {}
